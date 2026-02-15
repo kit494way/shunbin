@@ -11,7 +11,7 @@ env_logger = "0.11.8"
 log = "0.4.29"
 serde = { version = "1.0.228", features = ["derive"] }
 sudachi = { git = "https://github.com/WorksApplications/sudachi.rs.git", tag = "v0.6.10", version = "0.6.10" }
-sudachi_tantivy = { git = "https://github.com/kit494way/sudachi_tantivy.git", rev = "05a1c84c9744927824775b90bf2b751a78b3cde5" }
+sudachi_tantivy = { git = "https://github.com/kit494way/sudachi_tantivy.git", rev = "0ae362e96952c6592ccefbdeda63c61d5de37a27" }
 tantivy = "0.25.0"
 thiserror = "2.0.18"
 toml = "0.9.11"
