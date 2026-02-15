@@ -1194,7 +1194,7 @@ dependencies = [
 [[package]]
 name = "sudachi_tantivy"
 version = "0.1.0"
-source = "git+https://github.com/kit494way/sudachi_tantivy.git?rev=05a1c84c9744927824775b90bf2b751a78b3cde5#05a1c84c9744927824775b90bf2b751a78b3cde5"
+source = "git+https://github.com/kit494way/sudachi_tantivy.git?rev=0ae362e96952c6592ccefbdeda63c61d5de37a27#0ae362e96952c6592ccefbdeda63c61d5de37a27"
 dependencies = [
  "log",
  "sudachi",
