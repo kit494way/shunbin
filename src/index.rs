@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-use std::ffi::OsStr;
 use std::fs;
-use std::path::{Path, PathBuf, is_separator};
+use std::path::{PathBuf, is_separator};
 use std::sync::Arc;
 
 use log::warn;
@@ -15,6 +14,7 @@ use tantivy::schema::{DateOptions, IndexRecordOption, TextFieldIndexing, TextOpt
 use tantivy::tokenizer::RawTokenizer;
 
 use crate::config::{FieldConfig, SchemaConfig, TokenizerConfig};
+use crate::fs::RecursiveReadDir;
 
 const RAW_TOKENIZER_NAME: &str = "_raw";
 
@@ -32,12 +32,8 @@ pub fn index(index: &tantivy::Index, sources: HashMap<String, PathBuf>) -> anyho
     sources
         .iter()
         .try_for_each(|(name, source)| -> anyhow::Result<()> {
-            for entry in fs::read_dir(source)? {
-                let path = entry?.path();
-                if !path.is_index_target() {
-                    continue;
-                }
-
+            for entry in RecursiveReadDir::new(source.clone())? {
+                let path = entry?;
                 match path.clone().to_str() {
                     None => {
                         warn!("Skip {:?}, path string contains non-UTF8 string", path);
@@ -190,34 +186,4 @@ pub fn create_index(
         .register(RAW_TOKENIZER_NAME, RawTokenizer::default());
 
     Ok(index)
-}
-
-trait PathExt {
-    fn is_hidden(&self) -> bool;
-
-    fn is_regular_file(&self) -> bool;
-
-    fn is_index_target(&self) -> bool;
-}
-
-impl PathExt for Path {
-    fn is_hidden(&self) -> bool {
-        self.file_name()
-            .and_then(|f| f.to_str().map(|f| f.starts_with(".")))
-            .unwrap_or_default()
-    }
-
-    fn is_regular_file(&self) -> bool {
-        self.is_file() && !self.is_hidden()
-    }
-
-    fn is_index_target(&self) -> bool {
-        if !self.is_regular_file() {
-            return false;
-        }
-        match self.extension().and_then(OsStr::to_str) {
-            Some("md") | Some("txt") => true,
-            _ => false,
-        }
-    }
 }

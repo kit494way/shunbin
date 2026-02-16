@@ -1,6 +1,8 @@
 mod config;
 mod env;
+mod fs;
 mod index;
+mod path;
 mod search;
 
 use std::path::PathBuf;
