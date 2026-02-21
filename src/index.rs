@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::path::{PathBuf, is_separator};
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use log::warn;
+use serde::{Deserialize, Serialize, de};
 use sudachi::dic::dictionary::JapaneseDictionary;
 use sudachi_tantivy::SudachiTokenizer;
 use tantivy::Index;
@@ -14,74 +17,156 @@ use tantivy::schema::{DateOptions, IndexRecordOption, TextFieldIndexing, TextOpt
 use tantivy::tokenizer::RawTokenizer;
 
 use crate::config::{FieldConfig, SchemaConfig, TokenizerConfig};
+use crate::env::data_dir;
 use crate::fs::RecursiveReadDir;
 
 const RAW_TOKENIZER_NAME: &str = "_raw";
 
-pub fn index(index: &tantivy::Index, sources: HashMap<String, PathBuf>) -> anyhow::Result<()> {
-    let schema = index.schema();
-    let field_title = schema.get_field("title")?;
-    let field_body = schema.get_field("body")?;
-    let field_source = schema.get_field("source")?;
-    let field_path = schema.get_field("path")?;
-    let field_updated_at = schema.get_field("updated_at")?;
-    let field_id = schema.get_field("id")?;
+#[derive(Debug)]
+pub struct Indexer {
+    tms: Option<TimestampManager>,
+    count: usize,
+    increment: bool,
+}
 
-    let mut index_writer = index.writer(50_000_000)?;
-
-    sources
-        .iter()
-        .try_for_each(|(name, source)| -> anyhow::Result<()> {
-            for entry in RecursiveReadDir::new(source.clone())? {
-                let path = entry?;
-                match path.clone().to_str() {
-                    None => {
-                        warn!("Skip {:?}, path string contains non-UTF8 string", path);
-                    }
-                    Some(path_str) => {
-                        let relative_path =
-                            match source.to_str().and_then(|x| path_str.strip_prefix(x)) {
-                                Some(s) => s.trim_start_matches(is_separator),
-                                None => {
-                                    warn!("Skip {path_str}, failed to get a relative path");
-                                    continue;
-                                }
-                            };
-
-                        // Delete an old document
-                        let id = format!("{}:{}", name, relative_path);
-                        index_writer.delete_term(Term::from_field_text(field_id, id.as_str()));
-
-                        let body = fs::read_to_string(path)?;
-                        if body.is_empty() {
-                            continue;
-                        }
-
-                        // Treat the first line as the title of the Markdown file and remove all leading # characters.
-                        let title = body.lines().nth(0).unwrap().trim_start_matches("#").trim();
-
-                        let mut doc = TantivyDocument::default();
-                        doc.add_text(field_title, title);
-                        doc.add_text(field_body, body);
-                        doc.add_text(field_source, name);
-                        doc.add_text(field_path, relative_path);
-
-                        let now =
-                            tantivy::DateTime::from_timestamp_secs(chrono::Utc::now().timestamp());
-                        doc.add_date(field_updated_at, now);
-
-                        doc.add_text(field_id, id);
-
-                        index_writer.add_document(doc)?;
-                    }
-                };
+impl Indexer {
+    pub fn new() -> Self {
+        let tms = match TimestampManager::new() {
+            Ok(tms) => Some(tms),
+            Err(e) => {
+                warn!("Failed to initialize TimestampManager, {}", e);
+                None
             }
-            index_writer.commit()?;
+        };
+        Self {
+            tms,
+            count: 0,
+            increment: true,
+        }
+    }
 
-            Ok(())
-        })?;
+    pub fn index(
+        &mut self,
+        index_name: String,
+        index: &tantivy::Index,
+        sources: HashMap<String, PathBuf>,
+    ) -> anyhow::Result<()> {
+        let schema = index.schema();
+        let field_title = schema.get_field("title")?;
+        let field_body = schema.get_field("body")?;
+        let field_source = schema.get_field("source")?;
+        let field_path = schema.get_field("path")?;
+        let field_updated_at = schema.get_field("updated_at")?;
+        let field_id = schema.get_field("id")?;
 
-    Ok(())
+        let mut index_writer = index.writer(50_000_000)?;
+
+        sources
+            .iter()
+            .try_for_each(|(source_name, source)| -> anyhow::Result<()> {
+                let start_at = Utc::now();
+                let mut count = 0;
+
+                let read_dir =
+                    self.read_source(source.clone(), source_name.clone(), index_name.clone())?;
+                for entry in read_dir {
+                    let path = entry?;
+                    match path.clone().to_str() {
+                        None => {
+                            warn!("Skip {:?}, path string contains non-UTF8 string", path);
+                        }
+                        Some(path_str) => {
+                            let relative_path =
+                                match source.to_str().and_then(|x| path_str.strip_prefix(x)) {
+                                    Some(s) => s.trim_start_matches(is_separator),
+                                    None => {
+                                        warn!("Skip {path_str}, failed to get a relative path");
+                                        continue;
+                                    }
+                                };
+
+                            // Delete an old document
+                            let id = format!("{}:{}", source_name, relative_path);
+                            index_writer.delete_term(Term::from_field_text(field_id, id.as_str()));
+
+                            let body = fs::read_to_string(path)?;
+                            if body.is_empty() {
+                                continue;
+                            }
+
+                            // Treat the first line as the title of the Markdown file and remove all leading # characters.
+                            let title = body.lines().nth(0).unwrap().trim_start_matches("#").trim();
+
+                            let mut doc = TantivyDocument::default();
+                            doc.add_text(field_title, title);
+                            doc.add_text(field_body, body);
+                            doc.add_text(field_source, source_name);
+                            doc.add_text(field_path, relative_path);
+
+                            let now = tantivy::DateTime::from_timestamp_secs(
+                                chrono::Utc::now().timestamp(),
+                            );
+                            doc.add_date(field_updated_at, now);
+
+                            doc.add_text(field_id, id);
+
+                            index_writer.add_document(doc)?;
+                            count += 1;
+                        }
+                    };
+                }
+                index_writer.commit()?;
+                self.update_timestamp(index_name.clone(), source_name.clone(), start_at);
+                self.count += count;
+
+                Ok(())
+            })?;
+
+        Ok(())
+    }
+
+    pub fn indexed_count(&self) -> usize {
+        self.count
+    }
+
+    pub fn set_increment(mut self, increment: bool) -> Self {
+        self.increment = increment;
+        self
+    }
+
+    pub fn is_incrementable(&self) -> bool {
+        self.tms.is_some()
+    }
+
+    fn read_source(
+        &mut self,
+        source: PathBuf,
+        source_name: String,
+        index_name: String,
+    ) -> io::Result<RecursiveReadDir> {
+        let mut read_dir = RecursiveReadDir::new(source)?;
+        if self.increment
+            && let Some(tms) = self.tms.as_ref()
+            && let Some(last_updated_at) = tms.get_timestamp(index_name, source_name)
+        {
+            read_dir = read_dir.updated_after(last_updated_at);
+        }
+        Ok(read_dir)
+    }
+
+    fn update_timestamp(
+        &mut self,
+        index_name: String,
+        source_name: String,
+        start_at: DateTime<Utc>,
+    ) {
+        if let Some(tms) = self.tms.as_mut() {
+            tms.update(index_name.clone(), source_name.clone(), start_at)
+                .unwrap_or_else(|e| {
+                    warn!("Failed to update timestamp, {e:?}");
+                });
+        }
+    }
 }
 
 fn register_tokenizer(
@@ -186,4 +271,82 @@ pub fn create_index(
         .register(RAW_TOKENIZER_NAME, RawTokenizer::default());
 
     Ok(index)
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct TimestampManager {
+    timestamps: HashMap<TimestampKey, DateTime<Utc>>,
+}
+
+impl TimestampManager {
+    const TIMESTAMP_FILE_NAME: &str = "timestamp.toml";
+
+    fn new() -> anyhow::Result<Self> {
+        let timestamp_path = data_dir()?.join(Self::TIMESTAMP_FILE_NAME);
+        if timestamp_path.exists() {
+            let contents = fs::read_to_string(&timestamp_path).map_err(|e| {
+                warn!(
+                    "Failed to read {}: {:?}",
+                    timestamp_path.to_string_lossy(),
+                    e
+                );
+                e
+            })?;
+            toml::from_str::<TimestampManager>(&contents).map_err(anyhow::Error::from)
+        } else {
+            Ok(Self {
+                timestamps: HashMap::<TimestampKey, DateTime<Utc>>::new(),
+            })
+        }
+    }
+
+    fn update(
+        &mut self,
+        index: String,
+        source: String,
+        datetime: DateTime<Utc>,
+    ) -> anyhow::Result<()> {
+        self.timestamps
+            .insert(TimestampKey(index, source), datetime);
+        self.save()
+    }
+
+    fn save(&self) -> anyhow::Result<()> {
+        let contents = toml::to_string(self)?;
+        let timestamp_path = data_dir()?.join(Self::TIMESTAMP_FILE_NAME);
+        fs::write(timestamp_path, contents)?;
+        Ok(())
+    }
+
+    fn get_timestamp(&self, index: String, source: String) -> Option<DateTime<Utc>> {
+        self.timestamps.get(&TimestampKey(index, source)).copied()
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+struct TimestampKey(String, String);
+
+impl Serialize for TimestampKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&format!("{}:{}", self.0, self.1))
+    }
+}
+
+impl<'de> Deserialize<'de> for TimestampKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let parts: Vec<&str> = s.splitn(2, ":").collect();
+        if parts.len() != 2 {
+            return Err(de::Error::custom(
+                "expected 'index_name:source_name' format",
+            ));
+        }
+        Ok(TimestampKey(parts[0].to_string(), parts[1].to_string()))
+    }
 }

@@ -8,11 +8,11 @@ mod search;
 use std::path::PathBuf;
 use std::{process, usize};
 
-use clap::{Parser, Subcommand};
-use log::{debug, error};
+use clap::{Args, Parser, Subcommand};
+use log::{debug, error, warn};
 
 use crate::config::{Config, get_default_config_path};
-use crate::index::create_index;
+use crate::index::{Indexer, create_index};
 use crate::search::search;
 
 #[derive(Parser)]
@@ -30,6 +30,9 @@ enum Commands {
     Index {
         #[arg(long, short = 'i')]
         indexes: Vec<String>,
+
+        #[command(flatten)]
+        index_mode: IndexMode,
     },
     Search {
         #[arg(long, short = 'i')]
@@ -40,6 +43,16 @@ enum Commands {
 
         query: Vec<String>,
     },
+}
+
+#[derive(Args, Debug)]
+#[group(required = false, multiple = false)]
+struct IndexMode {
+    #[arg(long)]
+    full: bool,
+
+    #[arg(long)]
+    increment: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -59,7 +72,29 @@ fn main() -> anyhow::Result<()> {
     });
 
     match &cli.command {
-        Commands::Index { indexes } => {
+        Commands::Index {
+            indexes,
+            index_mode,
+        } => {
+            let mut indexer = Indexer::new();
+            indexer = match (
+                index_mode.full,
+                index_mode.increment,
+                indexer.is_incrementable(),
+            ) {
+                (true, _, _) => indexer.set_increment(false),
+                (_, true, true) => indexer.set_increment(true),
+                (_, true, false) => {
+                    error!("Cannot execute incremental index.");
+                    process::exit(1);
+                }
+                (_, false, true) => indexer,
+                (_, false, false) => {
+                    warn!("Fall back to full index.");
+                    indexer.set_increment(false)
+                }
+            };
+
             config
                 .indexes
                 .iter()
@@ -69,7 +104,9 @@ fn main() -> anyhow::Result<()> {
                     let index_path = index_config.get_path(index_name)?;
                     let index =
                         &create_index(index_path, schema_config, config.tokenizers.clone())?;
-                    index::index(index, index_config.sources.clone())
+                    indexer
+                        .index(index_name.to_string(), index, index_config.sources.clone())
+                        .map(|_| eprintln!("{} documents were indexed.", indexer.indexed_count()))
                 })?;
         }
         Commands::Search {

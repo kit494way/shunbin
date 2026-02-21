@@ -1,7 +1,11 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use chrono::DateTime;
+use chrono::Utc;
 
 use crate::path::PathExt;
 
@@ -10,6 +14,7 @@ use crate::path::PathExt;
 pub struct RecursiveReadDir {
     it: fs::ReadDir,
     dirs: VecDeque<PathBuf>,
+    last_updated_at: Option<SystemTime>,
 }
 
 impl RecursiveReadDir {
@@ -18,7 +23,13 @@ impl RecursiveReadDir {
         Ok(Self {
             it,
             dirs: VecDeque::<PathBuf>::new(),
+            last_updated_at: None,
         })
+    }
+
+    pub fn updated_after(mut self, datetime: DateTime<Utc>) -> Self {
+        self.last_updated_at = Some(datetime.into());
+        self
     }
 }
 
@@ -47,6 +58,12 @@ impl Iterator for RecursiveReadDir {
                     continue;
                 }
 
+                if let Some(time) = self.last_updated_at
+                    && !is_updated_after(&path, time).unwrap_or(true)
+                {
+                    continue;
+                }
+
                 return Some(Ok(path));
             }
 
@@ -60,4 +77,9 @@ impl Iterator for RecursiveReadDir {
             };
         }
     }
+}
+
+fn is_updated_after(path: &Path, time: SystemTime) -> io::Result<bool> {
+    let meta = fs::metadata(path)?;
+    Ok(meta.modified()? > time)
 }

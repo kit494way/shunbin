@@ -5,13 +5,13 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
-chrono = "0.4.43"
+chrono = { version = "0.4.43", features = ["serde"] }
 clap = { version = "4.5.56", features = ["derive"] }
 env_logger = "0.11.8"
 log = "0.4.29"
 serde = { version = "1.0.228", features = ["derive"] }
 sudachi = { git = "https://github.com/WorksApplications/sudachi.rs.git", tag = "v0.6.10", version = "0.6.10" }
-sudachi_tantivy = { git = "https://github.com/kit494way/sudachi_tantivy.git", rev = "0ae362e96952c6592ccefbdeda63c61d5de37a27" }
+sudachi_tantivy = { git = "https://github.com/kit494way/sudachi_tantivy.git", rev = "c4ee4ca7dd356a1fbf4af2968f1be434722e227d" }
 tantivy = "0.25.0"
 thiserror = "2.0.18"
 toml = "0.9.11"

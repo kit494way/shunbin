@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::env::{xdg_config_home, xdg_data_home};
-
-const APP_NAME: &str = "shunbin";
+use crate::env::{config_dir, data_dir};
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -81,7 +79,7 @@ impl IndexConfig {
     pub fn get_path(&self, index_name: &str) -> anyhow::Result<PathBuf> {
         match self.path.clone() {
             Some(x) => Ok(x),
-            None => xdg_data_home().map(|x| x.join(APP_NAME).join("indexes").join(index_name)),
+            None => data_dir().map(|x| x.join("indexes").join(index_name)),
         }
     }
 }
@@ -132,7 +130,7 @@ impl Into<sudachi::analysis::Mode> for SudachiSplitMode {
 }
 
 pub fn get_default_config_path() -> anyhow::Result<PathBuf> {
-    xdg_config_home().map(|x| x.join(APP_NAME).join("config.toml"))
+    config_dir().map(|x| x.join("config.toml"))
 }
 
 #[derive(Debug, Error)]
