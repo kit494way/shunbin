@@ -24,7 +24,7 @@ impl Doc {
                 anyhow::anyhow!(
                     "Failed to get the absolute path from source '{}' and path '{}'.",
                     self.source,
-                    self.path.to_string_lossy().to_string()
+                    self.path.to_string_lossy()
                 )
             })
     }
@@ -48,7 +48,7 @@ pub fn search(
     let field_path = schema.get_field("path")?;
     let field_updated_at = schema.get_field("updated_at")?;
 
-    let query_parser = QueryParser::for_index(&index, vec![field_title, field_body, field_updated_at]);
+    let query_parser = QueryParser::for_index(index, vec![field_title, field_body, field_updated_at]);
     let query = query_parser.parse_query(query)?;
 
     let top_docs = searcher.search(&query, &TopDocs::with_limit(limit))?;

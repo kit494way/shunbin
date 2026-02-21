@@ -24,9 +24,6 @@ impl PathExt for Path {
         if !self.is_regular_file() {
             return false;
         }
-        match self.extension().and_then(OsStr::to_str) {
-            Some("md") | Some("txt") => true,
-            _ => false,
-        }
+        matches!(self.extension().and_then(OsStr::to_str), Some("md") | Some("txt"))
     }
 }
