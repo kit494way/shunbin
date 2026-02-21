@@ -6,7 +6,7 @@ mod path;
 mod search;
 
 use std::path::PathBuf;
-use std::{process, usize};
+use std::process;
 
 use clap::{Args, Parser, Subcommand};
 use log::{debug, error, warn};
@@ -98,7 +98,7 @@ fn main() -> anyhow::Result<()> {
             config
                 .indexes
                 .iter()
-                .filter(|x| indexes.is_empty() || indexes.contains(&x.0))
+                .filter(|x| indexes.is_empty() || indexes.contains(x.0))
                 .try_for_each(|(index_name, index_config)| {
                     let schema_config = config.get_schema(index_config.schema.as_str())?;
                     let index_path = index_config.get_path(index_name)?;

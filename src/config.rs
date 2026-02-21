@@ -28,7 +28,7 @@ impl Config {
                 if self.indexes.len() == 1 {
                     Ok(self.indexes.iter().next().unwrap().0.clone())
                 } else {
-                    Err(ConfigError::NoDefaultIndexName.into())
+                    Err(ConfigError::NoDefaultIndexName)
                 }
             }
         }
@@ -45,7 +45,7 @@ impl Config {
     pub fn get_schema(&self, name: &str) -> Result<SchemaConfig, ConfigError> {
         self.schema
             .get(name)
-            .map(|x| x.clone())
+            .cloned()
             .ok_or_else(|| ConfigError::NotFoundSchema {
                 schema_name: name.to_string(),
             })
@@ -119,9 +119,9 @@ pub enum SudachiSplitMode {
     C,
 }
 
-impl Into<sudachi::analysis::Mode> for SudachiSplitMode {
-    fn into(self) -> sudachi::analysis::Mode {
-        match self {
+impl From<SudachiSplitMode> for sudachi::analysis::Mode {
+    fn from(value: SudachiSplitMode) -> Self {
+        match value {
             SudachiSplitMode::A => sudachi::analysis::Mode::A,
             SudachiSplitMode::B => sudachi::analysis::Mode::B,
             SudachiSplitMode::C => sudachi::analysis::Mode::C,

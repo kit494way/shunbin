@@ -67,9 +67,7 @@ impl Iterator for RecursiveReadDir {
                 return Some(Ok(path));
             }
 
-            let Some(dir) = self.dirs.pop_front() else {
-                return None;
-            };
+            let dir = self.dirs.pop_front()?;
 
             self.it = match fs::read_dir(dir) {
                 Ok(x) => x,
