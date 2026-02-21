@@ -1,6 +1,8 @@
 use std::env::{home_dir, var_os};
 use std::path::PathBuf;
 
+pub const APP_NAME: &str = "shunbin";
+
 #[cfg(unix)]
 pub fn xdg_config_home() -> anyhow::Result<PathBuf> {
     match var_os("XDG_CONFIG_HOME").map(PathBuf::from) {
@@ -39,4 +41,12 @@ pub fn xdg_data_home() -> anyhow::Result<PathBuf> {
             .map(PathBuf::from)
             .ok_or_else(|| anyhow::anyhow!("Failed to detect config file.")),
     }
+}
+
+pub fn data_dir() -> anyhow::Result<PathBuf> {
+    xdg_data_home().map(|x| x.join(APP_NAME))
+}
+
+pub fn config_dir() -> anyhow::Result<PathBuf> {
+    xdg_config_home().map(|x| x.join(APP_NAME))
 }
