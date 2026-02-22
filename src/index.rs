@@ -51,14 +51,7 @@ impl Indexer {
         index: &tantivy::Index,
         sources: HashMap<String, PathBuf>,
     ) -> anyhow::Result<()> {
-        let schema = index.schema();
-        let field_title = schema.get_field("title")?;
-        let field_body = schema.get_field("body")?;
-        let field_source = schema.get_field("source")?;
-        let field_path = schema.get_field("path")?;
-        let field_updated_at = schema.get_field("updated_at")?;
-        let field_id = schema.get_field("id")?;
-
+        let schema_fields = SchemaFields::from_index(index)?;
         let mut index_writer = index.writer(50_000_000)?;
 
         sources
@@ -71,49 +64,15 @@ impl Indexer {
                     self.read_source(source.clone(), source_name.clone(), index_name.clone())?;
                 for entry in read_dir {
                     let path = entry?;
-                    match path.clone().to_str() {
-                        None => {
-                            warn!("Skip {:?}, path string contains non-UTF8 string", path);
-                        }
-                        Some(path_str) => {
-                            let relative_path =
-                                match source.to_str().and_then(|x| path_str.strip_prefix(x)) {
-                                    Some(s) => s.trim_start_matches(is_separator),
-                                    None => {
-                                        warn!("Skip {path_str}, failed to get a relative path");
-                                        continue;
-                                    }
-                                };
-
-                            // Delete an old document
-                            let id = format!("{}:{}", source_name, relative_path);
-                            index_writer.delete_term(Term::from_field_text(field_id, id.as_str()));
-
-                            let body = fs::read_to_string(path)?;
-                            if body.is_empty() {
-                                continue;
-                            }
-
-                            // Treat the first line as the title of the Markdown file and remove all leading # characters.
-                            let title = body.lines().nth(0).unwrap().trim_start_matches("#").trim();
-
-                            let mut doc = TantivyDocument::default();
-                            doc.add_text(field_title, title);
-                            doc.add_text(field_body, body);
-                            doc.add_text(field_source, source_name);
-                            doc.add_text(field_path, relative_path);
-
-                            let now = tantivy::DateTime::from_timestamp_secs(
-                                chrono::Utc::now().timestamp(),
-                            );
-                            doc.add_date(field_updated_at, now);
-
-                            doc.add_text(field_id, id);
-
-                            index_writer.add_document(doc)?;
-                            count += 1;
-                        }
-                    };
+                    if self.index_inner(
+                        &mut index_writer,
+                        schema_fields,
+                        source_name.clone(),
+                        source.clone(),
+                        path,
+                    )? {
+                        count += 1;
+                    }
                 }
                 index_writer.commit()?;
                 self.update_timestamp(index_name.clone(), source_name.clone(), start_at);
@@ -123,6 +82,86 @@ impl Indexer {
             })?;
 
         Ok(())
+    }
+
+    pub fn index_file(
+        &mut self,
+        index: &tantivy::Index,
+        sources: HashMap<String, PathBuf>,
+        path: PathBuf,
+    ) -> anyhow::Result<()> {
+        let schema_fields = SchemaFields::from_index(index)?;
+        let mut index_writer = index.writer(50_000_000)?;
+
+        sources
+            .iter()
+            .try_for_each(|(source_name, source)| -> anyhow::Result<()> {
+                if self.index_inner(
+                    &mut index_writer,
+                    schema_fields,
+                    source_name.clone(),
+                    source.clone(),
+                    path.clone(),
+                )? {
+                    index_writer.commit()?;
+                    self.count += 1;
+                }
+
+                Ok(())
+            })?;
+
+        Ok(())
+    }
+
+    fn index_inner(
+        &self,
+        index_writer: &mut tantivy::IndexWriter,
+        schema: SchemaFields,
+        source_name: String,
+        source: PathBuf,
+        path: PathBuf,
+    ) -> anyhow::Result<bool> {
+        let path_string = match path.to_str() {
+            Some(s) => s.to_string(),
+            None => {
+                warn!("Skip {:?}, path string contains non-UTF8 string", path);
+                return Ok(false);
+            }
+        };
+
+        let relative_path = match source.to_str().and_then(|x| path_string.strip_prefix(x)) {
+            Some(s) => s.trim_start_matches(is_separator),
+            None => {
+                warn!("Skip {path_string}, failed to get a relative path");
+                return Ok(false);
+            }
+        };
+
+        // Delete an old document
+        let id = format!("{}:{}", source_name, relative_path);
+        index_writer.delete_term(Term::from_field_text(schema.id, id.as_str()));
+
+        let body = fs::read_to_string(path)?;
+        if body.is_empty() {
+            return Ok(false);
+        }
+
+        // Treat the first line as the title of the Markdown file and remove all leading # characters.
+        let title = body.lines().nth(0).unwrap().trim_start_matches("#").trim();
+
+        let mut doc = TantivyDocument::default();
+        doc.add_text(schema.title, title);
+        doc.add_text(schema.body, body);
+        doc.add_text(schema.source, source_name);
+        doc.add_text(schema.path, relative_path);
+
+        let now = tantivy::DateTime::from_timestamp_secs(chrono::Utc::now().timestamp());
+        doc.add_date(schema.updated_at, now);
+
+        doc.add_text(schema.id, id);
+
+        index_writer.add_document(doc)?;
+        Ok(true)
     }
 
     pub fn indexed_count(&self) -> usize {
@@ -166,6 +205,30 @@ impl Indexer {
                     warn!("Failed to update timestamp, {e:?}");
                 });
         }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+struct SchemaFields {
+    title: tantivy::schema::Field,
+    body: tantivy::schema::Field,
+    source: tantivy::schema::Field,
+    path: tantivy::schema::Field,
+    updated_at: tantivy::schema::Field,
+    id: tantivy::schema::Field,
+}
+
+impl SchemaFields {
+    fn from_index(index: &tantivy::Index) -> anyhow::Result<Self> {
+        let schema = index.schema();
+        Ok(SchemaFields {
+            title: schema.get_field("title")?,
+            body: schema.get_field("body")?,
+            source: schema.get_field("source")?,
+            path: schema.get_field("path")?,
+            updated_at: schema.get_field("updated_at")?,
+            id: schema.get_field("id")?,
+        })
     }
 }
 
