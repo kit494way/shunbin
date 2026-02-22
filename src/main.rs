@@ -53,6 +53,8 @@ struct IndexMode {
 
     #[arg(long)]
     increment: bool,
+
+    path: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -77,23 +79,26 @@ fn main() -> anyhow::Result<()> {
             index_mode,
         } => {
             let mut indexer = Indexer::new();
-            indexer = match (
-                index_mode.full,
-                index_mode.increment,
-                indexer.is_incrementable(),
-            ) {
-                (true, _, _) => indexer.set_increment(false),
-                (_, true, true) => indexer.set_increment(true),
-                (_, true, false) => {
-                    error!("Cannot execute incremental index.");
-                    process::exit(1);
-                }
-                (_, false, true) => indexer,
-                (_, false, false) => {
-                    warn!("Fall back to full index.");
-                    indexer.set_increment(false)
-                }
-            };
+
+            if index_mode.path.is_none() {
+                indexer = match (
+                    index_mode.full,
+                    index_mode.increment,
+                    indexer.is_incrementable(),
+                ) {
+                    (true, _, _) => indexer.set_increment(false),
+                    (_, true, true) => indexer.set_increment(true),
+                    (_, true, false) => {
+                        error!("Cannot execute incremental index.");
+                        process::exit(1);
+                    }
+                    (_, false, true) => indexer,
+                    (_, false, false) => {
+                        warn!("Fall back to full index.");
+                        indexer.set_increment(false)
+                    }
+                };
+            }
 
             config
                 .indexes
@@ -104,10 +109,14 @@ fn main() -> anyhow::Result<()> {
                     let index_path = index_config.get_path(index_name)?;
                     let index =
                         &create_index(index_path, schema_config, config.tokenizers.clone())?;
-                    indexer
-                        .index(index_name.to_string(), index, index_config.sources.clone())
-                        .map(|_| eprintln!("{} documents were indexed.", indexer.indexed_count()))
+
+                    match index_mode.path.as_ref() {
+                        Some(p) => indexer.index_file(index, index_config.sources.clone(), p.clone()),
+                        None => indexer.index(index_name.to_string(), index, index_config.sources.clone()),
+                    }
                 })?;
+
+            eprintln!("{} documents were indexed.", indexer.indexed_count());
         }
         Commands::Search {
             index,
