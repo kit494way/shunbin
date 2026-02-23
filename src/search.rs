@@ -48,7 +48,12 @@ pub fn search(
     let field_path = schema.get_field("path")?;
     let field_updated_at = schema.get_field("updated_at")?;
 
-    let query_parser = QueryParser::for_index(index, vec![field_title, field_body, field_updated_at]);
+    let query_parser = {
+        let mut query_parser =
+            QueryParser::for_index(index, vec![field_title, field_body, field_updated_at]);
+        query_parser.set_conjunction_by_default();
+        query_parser
+    };
     let query = query_parser.parse_query(query)?;
 
     let top_docs = searcher.search(&query, &TopDocs::with_limit(limit))?;
